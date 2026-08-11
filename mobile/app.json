@@ -1,0 +1,75 @@
+{
+  "expo": {
+    "name": "Daffodils",
+    "slug": "daffodils",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "daffodils",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F2EBDD"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.daffodils.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Daffodils uses your location to show intents and posts from people nearby.",
+        "NSCameraUsageDescription": "Daffodils uses the camera for face verification, which is required before you can create or join an intent.",
+        "NSPhotoLibraryUsageDescription": "Attach photos to your posts and chats.",
+        "NSFaceIDUsageDescription": "Securely store your session on this device."
+      }
+    },
+    "android": {
+      "package": "app.daffodils.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#F2EBDD",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Daffodils uses your location to show intents and posts from people nearby."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Daffodils uses the camera for face verification, required before creating or joining an intent."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach photos to your posts and chats."
+        }
+      ],
+      "expo-notifications"
+    ],
+    "extra": {
+      "router": {}
+    }
+  }
+}

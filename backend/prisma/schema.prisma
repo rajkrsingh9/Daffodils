@@ -1,0 +1,550 @@
+// Daffodils — moment-based companionship platform
+// Primary DB: PostgreSQL + PostGIS. Prisma owns the DDL; `geom` columns are
+// geography(Point,4326) written via raw SQL in the service layer and indexed
+// with GIST by prisma/postgis.sql (see src/scripts/migrate.ts).
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+// ─────────────────────────────────────────────────────────────── enums ──
+
+enum TrustTier {
+  TIER_1 // registered only
+  TIER_2 // phone OTP verified
+  TIER_3 // ID document reviewed
+}
+
+enum PostType {
+  MOMENT
+  VIBE_CHECK
+  ACTIVITY_LOG
+  WISHLIST
+}
+
+enum PostStatus {
+  DRAFT // auto-generated activity logs land here until the user publishes
+  PUBLISHED
+  REMOVED
+}
+
+enum ReactionType {
+  LIKE
+  DISLIKE
+}
+
+enum VibeTag {
+  CASUAL
+  ENERGETIC
+  QUIET
+  ADVENTUROUS
+}
+
+enum IntentStatus {
+  ACTIVE
+  MATCHED
+  EXPIRED
+  CANCELLED
+  COMPLETED
+}
+
+enum ResponseStatus {
+  YES // responder tapped "I'm in"
+  SELECTED // maker chose them, awaiting their confirmation
+  CONFIRMED // responder accepted -> match created
+  DECLINED // responder rejected the selection
+  WITHDRAWN // responder pulled out before selection
+  PASSED_OVER // maker chose someone else
+}
+
+enum MatchStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum ChatRoomStatus {
+  OPEN
+  CLOSED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  LOCATION
+  SYSTEM
+}
+
+enum NotificationType {
+  INTENT_BROADCAST
+  INTENT_RESPONSE
+  SELECTION_REQUEST
+  MATCH_CONFIRMED
+  MATCH_DECLINED
+  CHAT_MESSAGE
+  RATING_REQUEST
+  ACTIVITY_LOG_DRAFT
+  SOS_ALERT
+  SYSTEM
+}
+
+enum ModerationStatus {
+  PENDING
+  REVIEWED_KEPT
+  REVIEWED_REMOVED
+}
+
+enum FaceCheckKind {
+  ENROLLMENT
+  VERIFICATION
+}
+
+// ─────────────────────────────────────────────────────────────── users ──
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  phone        String? @unique
+  email        String? @unique
+  passwordHash String
+
+  name      String
+  username  String  @unique
+  city      String?
+  bio       String? @db.VarChar(300)
+  avatarUrl String?
+
+  interestTags String[] @default([])
+
+  trustTier     TrustTier @default(TIER_1)
+  trustScore    Decimal   @default(0) @db.Decimal(4, 2)
+  activitiesDone Int      @default(0)
+  companionsMet Int       @default(0)
+
+  // Face gate — required before creating OR joining any intent (spec §2).
+  faceVerified   Boolean   @default(false)
+  faceVerifiedAt DateTime?
+
+  phoneVerified Boolean @default(false)
+  emailVerified Boolean @default(false)
+
+  // Last known location, mirrored from Redis on each update for durable queries.
+  lat          Float?
+  lng          Float?
+  locationAt   DateTime?
+  geom         Unsupported("geography(Point, 4326)")?
+
+  isActive     Boolean  @default(true)
+  lastActiveAt DateTime @default(now())
+  deletedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  faceRecords       FaceRecord[]
+  faceChecks        FaceCheck[]
+  devices           Device[]
+  posts             Post[]              @relation("PostAuthor")
+  reactions         PostReaction[]
+  comments          Comment[]
+  intents           Intent[]            @relation("IntentCreator")
+  responses         IntentResponse[]
+  matchesAsMaker    Match[]             @relation("MatchMaker")
+  matchesAsCompanion Match[]            @relation("MatchCompanion")
+  messages          Message[]
+  ratingsGiven      Rating[]            @relation("RatingAuthor")
+  ratingsReceived   Rating[]            @relation("RatingSubject")
+  blocksMade        Block[]             @relation("Blocker")
+  blocksReceived    Block[]             @relation("Blocked")
+  reportsMade       Report[]            @relation("Reporter")
+  reportsReceived   Report[]            @relation("ReportedUser")
+  trustedContact    TrustedContact?
+  safetyLogs        SafetyLog[]
+  notifications     Notification[]
+
+  @@index([username])
+  @@index([lastActiveAt])
+  @@map("users")
+}
+
+model Device {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  expoPushToken String   @unique
+  platform      String?
+  createdAt     DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("devices")
+}
+
+// ──────────────────────────────────────────────────────── face records ──
+
+/// Enrolled biometric template. Raw selfies are never stored — only the
+/// derived descriptor plus a reference URL for the enrolment thumbnail.
+model FaceRecord {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  provider   String
+  descriptor Float[]
+  imageUrl   String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+  @@map("face_records")
+}
+
+/// Audit trail for every enrolment and liveness/match check.
+model FaceCheck {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @db.Uuid
+  kind      FaceCheckKind
+  passed    Boolean
+  score     Float?
+  provider  String
+  reason    String?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("face_checks")
+}
+
+// ─────────────────────────────────────────────────────────────── posts ──
+
+model Post {
+  id       String     @id @default(uuid()) @db.Uuid
+  authorId String     @db.Uuid
+  type     PostType
+  status   PostStatus @default(PUBLISHED)
+
+  caption   String   @db.VarChar(280)
+  mediaUrls String[] @default([])
+
+  locationName String?
+  lat          Float?
+  lng          Float?
+  geom         Unsupported("geography(Point, 4326)")?
+
+  likeCount    Int @default(0)
+  /// Never serialised in a public response — owner-only (spec §7, §11).
+  dislikeCount Int @default(0)
+  commentCount Int @default(0)
+
+  flaggedForModeration Boolean @default(false)
+
+  /// Set when a WISHLIST post is converted one-tap into a live intent.
+  convertedIntentId String? @db.Uuid
+  /// Set on auto-generated ACTIVITY_LOG drafts.
+  sourceMatchId     String? @db.Uuid
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  author          User             @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  reactions       PostReaction[]
+  comments        Comment[]
+  moderationFlags ModerationFlag[]
+
+  @@index([authorId, createdAt])
+  @@index([status, createdAt])
+  @@map("posts")
+}
+
+model PostReaction {
+  id        String       @id @default(uuid()) @db.Uuid
+  postId    String       @db.Uuid
+  userId    String       @db.Uuid
+  type      ReactionType
+  createdAt DateTime     @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([userId, type])
+  @@map("post_reactions")
+}
+
+model Comment {
+  id       String  @id @default(uuid()) @db.Uuid
+  postId   String  @db.Uuid
+  authorId String  @db.Uuid
+  parentId String? @db.Uuid
+
+  body      String    @db.VarChar(500)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  post     Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("CommentThread")
+
+  @@index([postId, createdAt])
+  @@index([parentId])
+  @@map("comments")
+}
+
+model ModerationFlag {
+  id        String           @id @default(uuid()) @db.Uuid
+  postId    String           @db.Uuid
+  reason    String
+  status    ModerationStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  reviewedAt DateTime?
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("moderation_flags")
+}
+
+// ───────────────────────────────────────────────────────────── intents ──
+
+model Intent {
+  id        String @id @default(uuid()) @db.Uuid
+  creatorId String @db.Uuid
+
+  title       String  @db.VarChar(120)
+  description String? @db.VarChar(500)
+  activityEmoji String @default("✨")
+
+  locationName String
+  lat          Float
+  lng          Float
+  geom         Unsupported("geography(Point, 4326)")?
+
+  scheduledAt DateTime
+  groupSize   Int          @default(1)
+  filledSlots Int          @default(0)
+  vibeTag     VibeTag      @default(CASUAL)
+  radiusKm    Float        @default(5)
+  expiresAt   DateTime
+  status      IntentStatus @default(ACTIVE)
+
+  broadcastCount Int @default(0)
+
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  creator   User             @relation("IntentCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  responses IntentResponse[]
+  matches   Match[]
+
+  @@index([status, expiresAt])
+  @@index([creatorId, createdAt])
+  @@map("intents")
+}
+
+model IntentResponse {
+  id          String         @id @default(uuid()) @db.Uuid
+  intentId    String         @db.Uuid
+  responderId String         @db.Uuid
+  status      ResponseStatus @default(YES)
+  message     String?        @db.VarChar(200)
+
+  /// Distance in metres between responder and intent at response time.
+  distanceM Float?
+
+  selectedAt DateTime?
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  intent    Intent @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  responder User   @relation(fields: [responderId], references: [id], onDelete: Cascade)
+
+  @@unique([intentId, responderId])
+  @@index([intentId, status])
+  @@map("intent_responses")
+}
+
+model Match {
+  id          String      @id @default(uuid()) @db.Uuid
+  intentId    String      @db.Uuid
+  makerId     String      @db.Uuid
+  companionId String      @db.Uuid
+  status      MatchStatus @default(PENDING)
+
+  confirmedAt DateTime?
+  completedAt DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime    @default(now())
+
+  intent    Intent    @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  maker     User      @relation("MatchMaker", fields: [makerId], references: [id], onDelete: Cascade)
+  companion User      @relation("MatchCompanion", fields: [companionId], references: [id], onDelete: Cascade)
+  chatRoom  ChatRoom?
+  ratings   Rating[]
+
+  @@unique([intentId, companionId])
+  @@index([makerId, status])
+  @@index([companionId, status])
+  @@map("matches")
+}
+
+// ──────────────────────────────────────────────────────────────── chat ──
+
+model ChatRoom {
+  id        String         @id @default(uuid()) @db.Uuid
+  matchId   String         @unique @db.Uuid
+  status    ChatRoomStatus @default(OPEN)
+  expiresAt DateTime
+  closedAt  DateTime?
+  createdAt DateTime       @default(now())
+
+  match    Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([status, expiresAt])
+  @@map("chat_rooms")
+}
+
+model Message {
+  id       String      @id @default(uuid()) @db.Uuid
+  roomId   String      @db.Uuid
+  senderId String      @db.Uuid
+  type     MessageType @default(TEXT)
+
+  body     String? @db.VarChar(2000)
+  mediaUrl String?
+  lat      Float?
+  lng      Float?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@map("messages")
+}
+
+// ───────────────────────────────────────────────────── ratings & trust ──
+
+model Rating {
+  id      String @id @default(uuid()) @db.Uuid
+  matchId String @db.Uuid
+  raterId String @db.Uuid
+  rateeId String @db.Uuid
+
+  score  Int
+  review String? @db.VarChar(140)
+
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  rater User  @relation("RatingAuthor", fields: [raterId], references: [id], onDelete: Cascade)
+  ratee User  @relation("RatingSubject", fields: [rateeId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, raterId])
+  @@index([rateeId, createdAt])
+  @@map("ratings")
+}
+
+// ────────────────────────────────────────────────── safety & moderation ──
+
+model Block {
+  id        String   @id @default(uuid()) @db.Uuid
+  blockerId String   @db.Uuid
+  blockedId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+model Report {
+  id             String  @id @default(uuid()) @db.Uuid
+  reporterId     String  @db.Uuid
+  reportedUserId String? @db.Uuid
+  postId         String? @db.Uuid
+  reason         String
+  details        String? @db.VarChar(500)
+  status         ModerationStatus @default(PENDING)
+  createdAt      DateTime @default(now())
+
+  reporter     User  @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedUser User? @relation("ReportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("reports")
+}
+
+model TrustedContact {
+  id       String @id @default(uuid()) @db.Uuid
+  userId   String @unique @db.Uuid
+  name     String
+  phone    String
+  relation String?
+  /// Populated when the trusted contact is also a Daffodils user, so SOS can push.
+  linkedUserId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("trusted_contacts")
+}
+
+model SafetyLog {
+  id      String  @id @default(uuid()) @db.Uuid
+  userId  String  @db.Uuid
+  matchId String? @db.Uuid
+  kind    String  @default("SOS")
+
+  lat Float?
+  lng Float?
+
+  notifiedPhone String?
+  smsDelivered  Boolean @default(false)
+  pushDelivered Boolean @default(false)
+  note          String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("safety_logs")
+}
+
+model Notification {
+  id     String           @id @default(uuid()) @db.Uuid
+  userId String           @db.Uuid
+  type   NotificationType
+  title  String
+  body   String
+  data   Json?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}

@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.expo/
+.expo-shared/
+web-build/
+*.log
+.DS_Store
+
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Native build output
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
