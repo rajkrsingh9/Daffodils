@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import {
   Avatar,
   Badge,
@@ -64,6 +65,8 @@ export default function MakerDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [choosing, setChoosing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Responder id to badge + border-highlight for a beat after it arrives. */
+  const [justArrivedId, setJustArrivedId] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!id) return;
@@ -95,7 +98,14 @@ export default function MakerDashboard() {
     const socket = getSocket();
     if (!socket) return;
 
-    const onResponse = () => void load(true);
+    const onResponse = (payload: { responseId: string }) => {
+      setJustArrivedId(payload.responseId);
+      setTimeout(
+        () => setJustArrivedId((current) => (current === payload.responseId ? null : current)),
+        4000
+      );
+      void load(true);
+    };
     const onDeclined = () => {
       void load(true);
       Alert.alert('They passed', 'Pick someone else from the list.');
@@ -246,6 +256,7 @@ export default function MakerDashboard() {
                 item={r}
                 busy={choosing === r.id}
                 disabled={Boolean(pendingSelection) && r.status !== 'SELECTED'}
+                isNew={r.id === justArrivedId}
                 onChoose={() => choose(r.id, r.responder.name)}
                 onOpenProfile={() => router.push(`/profile/${r.responder.username}`)}
               />
@@ -267,19 +278,38 @@ function ResponderCard({
   onOpenProfile,
   busy,
   disabled,
+  isNew,
 }: {
   item: Responder;
   onChoose: () => void;
   onOpenProfile: () => void;
   busy: boolean;
   disabled: boolean;
+  isNew: boolean;
 }) {
   const selected = item.status === 'SELECTED';
   const resolved = ['DECLINED', 'WITHDRAWN', 'PASSED_OVER'].includes(item.status);
 
   return (
-    <ClayCard style={{ gap: spacing.md, opacity: resolved ? 0.55 : 1 }}>
-      <Pressable onPress={onOpenProfile}>
+    // `entering` only plays for a card that is genuinely new to the list —
+    // React reconciles by the stable `key={r.id}` above, so an already-
+    // mounted card never re-triggers it on a refetch, only a fresh arrival
+    // does. `layout` lets the rest of the list glide out of the way for it.
+    <Animated.View entering={FadeInDown.springify().damping(15).mass(0.7)} layout={Layout.springify()}>
+      {isNew ? (
+        <View style={{ flexDirection: 'row', marginBottom: 6 }}>
+          <Badge label="JUST ARRIVED 🆕" color={colors.success} soft={colors.mintSoft} dot />
+        </View>
+      ) : null}
+      <ClayCard
+        style={{
+          gap: spacing.md,
+          opacity: resolved ? 0.55 : 1,
+          borderWidth: isNew ? 2 : 0,
+          borderColor: isNew ? colors.success : 'transparent',
+        }}
+      >
+        <Pressable onPress={onOpenProfile}>
         <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
           <Avatar uri={item.responder.avatarUrl} name={item.responder.name} size={54} />
           <View style={{ flex: 1, gap: 3 }}>
@@ -345,7 +375,8 @@ function ResponderCard({
           onPress={onChoose}
         />
       ) : null}
-    </ClayCard>
+      </ClayCard>
+    </Animated.View>
   );
 }
 

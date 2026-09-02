@@ -219,6 +219,34 @@ async function main() {
   // ── intent + broadcast ───────────────────────────────────────────────
   section('intent creation & geofenced broadcast');
 
+  // Connected ahead of intent creation so we can catch the "nearby intent"
+  // socket event the instant it fires and inspect the full card payload the
+  // client-side popup renders straight off — no follow-up GET involved.
+  const socket: Socket = ioClient(BASE, {
+    auth: { token: responder.token },
+    transports: ['websocket'],
+  });
+  const socketReady = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), 5000);
+    socket.on('connect', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    socket.on('connect_error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+  check('authenticated socket connects', socketReady);
+
+  const nearbyPopupEvent = new Promise<Record<string, unknown> | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), 6000);
+    socket.once('intent:nearby', (payload: Record<string, unknown>) => {
+      clearTimeout(timer);
+      resolve(payload);
+    });
+  });
+
   const scheduledAt = new Date(Date.now() + 3 * 3600_000);
   const created = await maker.api.post('/intents', {
     title: 'Coffee at Flurys',
@@ -237,6 +265,32 @@ async function main() {
 
   const intentId = created.data?.data?.id;
   check('broadcast reached nearby users', (created.data?.data?.broadcast?.notified ?? 0) >= 2, created.data?.data?.broadcast);
+
+  // The interactive "someone posted nearby" popup card renders entirely off
+  // this one socket payload — verify it actually carries everything the
+  // card needs, not just an id to go fetch.
+  const nearbyPopup = await nearbyPopupEvent;
+  check('intent:nearby fires with a full card payload', Boolean(nearbyPopup), nearbyPopup);
+  check('popup payload names the right intent', nearbyPopup?.intentId === intentId);
+  check(
+    'popup payload embeds the creator profile',
+    (nearbyPopup?.creator as { username?: string } | undefined)?.username === maker.username,
+    nearbyPopup?.creator
+  );
+  check(
+    'popup payload carries coordinates for the map',
+    typeof nearbyPopup?.lat === 'number' && typeof nearbyPopup?.lng === 'number'
+  );
+  check(
+    'popup payload knows the responder is already face-verified',
+    nearbyPopup?.requiresFaceVerification === false,
+    nearbyPopup
+  );
+  check(
+    'popup payload carries a live distance label',
+    typeof nearbyPopup?.distanceLabel === 'string' && (nearbyPopup.distanceLabel as string).length > 0,
+    nearbyPopup?.distanceLabel
+  );
 
   const dup = await maker.api.post('/intents', {
     title: 'Second intent',
@@ -303,25 +357,8 @@ async function main() {
   const select = await maker.api.post(`/intents/${intentId}/select`, { responseId });
   check('maker chooses a companion', select.status === 200, select.data);
 
-  // ── socket wiring, before confirming so we catch the match event ──────
+  // ── socket already connected above; confirm match events next ─────────
   section('realtime');
-  const socket: Socket = ioClient(BASE, {
-    auth: { token: responder.token },
-    transports: ['websocket'],
-  });
-
-  const socketReady = await new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => resolve(false), 5000);
-    socket.on('connect', () => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-    socket.on('connect_error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-  });
-  check('authenticated socket connects', socketReady);
 
   const badSocket: Socket = ioClient(BASE, {
     auth: { token: 'not-a-real-token' },
@@ -380,12 +417,31 @@ async function main() {
     });
   });
 
+  // chat:activity fires on the recipient's own user room (not the chat
+  // room), so their "someone messaged you" toast can name the sender and
+  // preview the text without a round trip back to the server.
+  const chatToastEvent = new Promise<Record<string, unknown> | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), 6000);
+    socket.once('chat:activity', (payload: Record<string, unknown>) => {
+      clearTimeout(timer);
+      resolve(payload);
+    });
+  });
+
   const sent = await maker.api.post(`/chat/rooms/${roomId}/messages`, {
     type: 'TEXT',
     body: 'See you at 6:30 outside Flurys!',
   });
   check('maker sends a message', sent.status === 201, sent.data);
   check('message delivered to the other party in realtime', await incoming);
+
+  const chatToast = await chatToastEvent;
+  check('chat:activity names the sender for the toast', chatToast?.senderName === maker.name, chatToast);
+  check(
+    'chat:activity previews the message text',
+    typeof chatToast?.preview === 'string' && (chatToast.preview as string).includes('6:30'),
+    chatToast?.preview
+  );
 
   const ping = await responder.api.post(`/chat/rooms/${roomId}/messages`, {
     type: 'LOCATION',

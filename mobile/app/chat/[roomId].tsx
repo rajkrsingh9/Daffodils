@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   Avatar,
@@ -27,6 +27,7 @@ import { api, apiError, unwrap } from '../../services/api';
 import { connectSocket, getSocket } from '../../services/socket';
 import { useAuthStore } from '../../stores/authStore';
 import { useChatStore, type ChatMessage } from '../../stores/chatStore';
+import { useLiveEventStore } from '../../stores/liveEventStore';
 import { useLocationStore } from '../../stores/locationStore';
 
 interface Room {
@@ -77,6 +78,16 @@ export default function ChatRoom() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // While this exact room is open, the global toast for it is redundant —
+  // the message is already arriving live in the thread below.
+  useFocusEffect(
+    useCallback(() => {
+      if (!roomId) return;
+      useLiveEventStore.getState().setActiveChatRoom(roomId);
+      return () => useLiveEventStore.getState().setActiveChatRoom(null);
+    }, [roomId])
+  );
 
   useEffect(() => {
     if (!roomId) return;

@@ -40,7 +40,10 @@ interface IntentDetail {
   distanceLabel: string | null;
   isMine: boolean;
   sharedInterests: string[];
-  myResponse: { id: string; status: string } | null;
+  myResponse: {
+    id: string;
+    status: 'YES' | 'SELECTED' | 'CONFIRMED' | 'DECLINED' | 'WITHDRAWN' | 'PASSED_OVER';
+  } | null;
   creator: {
     id: string;
     name: string;
@@ -132,6 +135,49 @@ export default function IntentDetailScreen() {
     }
   };
 
+  // The maker chose them — this is the confirm step the "You've been
+  // chosen!" toast routes here to complete.
+  const confirmSelection = async () => {
+    if (!intent?.myResponse) return;
+    setBusy(true);
+    try {
+      const match = await unwrap<{ id: string }>(
+        api.post(`/matches/responses/${intent.myResponse.id}/confirm`)
+      );
+      router.replace(`/match/${match.id}`);
+    } catch (err) {
+      Alert.alert('Could not confirm', apiError(err));
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const declineSelection = () =>
+    Alert.alert(
+      'Decline this plan?',
+      `${intent?.creator.name} will be told and can pick someone else.`,
+      [
+        { text: 'Keep waiting', style: 'cancel' },
+        {
+          text: 'Decline',
+          style: 'destructive',
+          onPress: async () => {
+            if (!intent?.myResponse) return;
+            setBusy(true);
+            try {
+              await api.post(`/matches/responses/${intent.myResponse.id}/decline`);
+              await load();
+            } catch (err) {
+              Alert.alert('Could not decline', apiError(err));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ]
+    );
+
   if (error && !intent) {
     return (
       <Screen>
@@ -152,7 +198,8 @@ export default function IntentDetailScreen() {
 
   const expiresInMs = new Date(intent.expiresAt).getTime() - Date.now();
   const isOpen = intent.status === 'ACTIVE' && expiresInMs > 0;
-  const responded = Boolean(intent.myResponse && intent.myResponse.status !== 'WITHDRAWN');
+  const myStatus = intent.myResponse?.status;
+  const responded = Boolean(myStatus && myStatus !== 'WITHDRAWN');
 
   return (
     <Screen edges={['top', 'bottom']}>
@@ -282,47 +329,84 @@ export default function IntentDetailScreen() {
       </ScrollView>
 
       {/* action bar */}
-      {!intent.isMine && isOpen ? (
+      {!intent.isMine ? (
         <View
           style={{
-            flexDirection: 'row',
-            gap: spacing.md,
+            gap: spacing.sm,
             padding: spacing.lg,
             borderTopWidth: 1,
             borderTopColor: colors.borderSoft,
             backgroundColor: colors.bg,
           }}
         >
-          {responded ? (
+          {myStatus === 'SELECTED' ? (
             <>
-              <View style={{ flex: 1, justifyContent: 'center' }}>
-                <Badge label="YOU'RE IN — WAITING" color={colors.success} soft={colors.mintSoft} dot />
+              <View style={{ flexDirection: 'row' }}>
+                <Badge label="YOU'VE BEEN CHOSEN 🤝" color={colors.warning} soft={colors.primarySoft} dot />
+              </View>
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                <ClayButton
+                  title="Decline"
+                  variant="secondary"
+                  loading={busy}
+                  onPress={declineSelection}
+                  style={{ flex: 1 }}
+                />
+                <ClayButton
+                  title="Confirm →"
+                  loading={busy}
+                  onPress={confirmSelection}
+                  style={{ flex: 2 }}
+                />
+              </View>
+            </>
+          ) : myStatus === 'CONFIRMED' ? (
+            <View style={{ flexDirection: 'row', gap: spacing.md, alignItems: 'center' }}>
+              <View style={{ flex: 1 }}>
+                <Badge label="MATCHED 🌼" color={colors.success} soft={colors.mintSoft} dot />
               </View>
               <ClayButton
-                title="Withdraw"
-                variant="secondary"
-                loading={busy}
-                onPress={withdraw}
-              />
-            </>
-          ) : (
-            <>
-              <ClayButton
-                title="Skip"
-                variant="secondary"
-                onPress={() => router.back()}
-                style={{ flex: 1 }}
-              />
-              <ClayButton
-                title="I'm in →"
-                size="lg"
-                loading={busy}
-                disabled={intent.slotsRemaining === 0}
-                onPress={respond}
+                title="Open chat →"
+                onPress={() => router.push('/(tabs)/chat')}
                 style={{ flex: 2 }}
               />
-            </>
-          )}
+            </View>
+          ) : myStatus === 'DECLINED' ? (
+            <Badge label="YOU DECLINED THIS PLAN" color={colors.textFaint} soft={colors.surfaceSunken} />
+          ) : myStatus === 'PASSED_OVER' ? (
+            <Badge label="MAKER CHOSE SOMEONE ELSE" color={colors.textFaint} soft={colors.surfaceSunken} />
+          ) : isOpen ? (
+            responded ? (
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                <View style={{ flex: 1, justifyContent: 'center' }}>
+                  <Badge label="YOU'RE IN — WAITING" color={colors.success} soft={colors.mintSoft} dot />
+                </View>
+                <ClayButton
+                  title="Withdraw"
+                  variant="secondary"
+                  loading={busy}
+                  onPress={withdraw}
+                />
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                <ClayButton
+                  title="Skip"
+                  variant="secondary"
+                  onPress={() => router.back()}
+                  style={{ flex: 1 }}
+                />
+                <ClayButton
+                  title="I'm in →"
+                  size="lg"
+                  loading={busy}
+                  disabled={intent.slotsRemaining === 0}
+                  onPress={respond}
+                  style={{ flex: 2 }}
+                />
+              </View>
+            )
+          ) : null}
         </View>
       ) : null}
     </Screen>
