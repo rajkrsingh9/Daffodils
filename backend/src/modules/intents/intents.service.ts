@@ -19,6 +19,8 @@ const creatorSelect = {
   activitiesDone: true,
   companionsMet: true,
   interestTags: true,
+  faceVerified: true,
+  createdAt: true,
 } as const;
 
 export interface CreateIntentInput {
@@ -64,11 +66,6 @@ export async function createIntent(creatorId: string, input: CreateIntentInput) 
     );
   }
 
-  const creator = await prisma.user.findUniqueOrThrow({
-    where: { id: creatorId },
-    select: { name: true },
-  });
-
   const intent = await prisma.intent.create({
     data: {
       creatorId,
@@ -94,17 +91,25 @@ export async function createIntent(creatorId: string, input: CreateIntentInput) 
     });
   }
 
+  // The full intent + creator record is handed straight to the broadcast so
+  // the "nearby intent" popup can render instantly off the socket payload —
+  // no follow-up GET before the card can show a face, a trust badge, or a
+  // countdown.
   const broadcast = await broadcastIntent({
     id: intent.id,
     creatorId,
-    creatorName: creator.name,
+    creator: intent.creator,
     title: intent.title,
+    description: intent.description,
     locationName: intent.locationName,
     scheduledAt: intent.scheduledAt,
+    expiresAt: intent.expiresAt,
     lat: intent.lat,
     lng: intent.lng,
     radiusKm: intent.radiusKm,
     activityEmoji: intent.activityEmoji,
+    vibeTag: intent.vibeTag,
+    groupSize: intent.groupSize,
   });
 
   return { ...intent, broadcast };
@@ -377,7 +382,7 @@ export async function listResponses(intentId: string, userId: string) {
 export async function rebroadcast(intentId: string, userId: string) {
   const intent = await prisma.intent.findUnique({
     where: { id: intentId },
-    include: { creator: { select: { name: true } } },
+    include: { creator: { select: creatorSelect } },
   });
   if (!intent) throw notFound('Intent not found');
   if (intent.creatorId !== userId) throw forbidden('This is not your intent');
@@ -386,13 +391,17 @@ export async function rebroadcast(intentId: string, userId: string) {
   return broadcastIntent({
     id: intent.id,
     creatorId: intent.creatorId,
-    creatorName: intent.creator.name,
+    creator: intent.creator,
     title: intent.title,
+    description: intent.description,
     locationName: intent.locationName,
     scheduledAt: intent.scheduledAt,
+    expiresAt: intent.expiresAt,
     lat: intent.lat,
     lng: intent.lng,
     radiusKm: intent.radiusKm,
     activityEmoji: intent.activityEmoji,
+    vibeTag: intent.vibeTag,
+    groupSize: intent.groupSize,
   });
 }

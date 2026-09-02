@@ -189,15 +189,24 @@ export async function sendMessage(
   const recipientId =
     room.match.makerId === senderId ? room.match.companionId : room.match.makerId;
 
-  // Also nudge the recipient's user room so an unopened app updates its badge.
-  emitToUser(recipientId, 'chat:activity', { roomId, messageId: message.id });
-
   const preview =
     type === 'TEXT'
       ? message.body!.slice(0, 80)
       : type === 'IMAGE'
         ? '📷 Photo'
         : '📍 Shared their location';
+
+  // Nudges the recipient's user room (not the chat room itself) so a client
+  // that has the app open but isn't inside this exact conversation can raise
+  // an in-app toast with enough context to act on — who, what, where to go —
+  // without an extra round trip back to the server.
+  emitToUser(recipientId, 'chat:activity', {
+    roomId,
+    messageId: message.id,
+    senderName: message.sender.name,
+    senderAvatarUrl: message.sender.avatarUrl,
+    preview,
+  });
 
   await notify({
     userId: recipientId,

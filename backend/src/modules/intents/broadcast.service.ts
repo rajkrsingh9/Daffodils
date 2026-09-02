@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, TrustTier, VibeTag } from '@prisma/client';
 import { prisma } from '../../config/db';
 import { env } from '../../config/env';
 import { keys, redis } from '../../config/redis';
@@ -11,6 +11,19 @@ export interface BroadcastTarget {
   name: string;
   distanceM: number;
   faceVerified: boolean;
+}
+
+export interface BroadcastCreator {
+  id: string;
+  name: string;
+  username: string;
+  avatarUrl: string | null;
+  trustTier: TrustTier;
+  trustScore: Prisma.Decimal | number | string;
+  companionsMet: number;
+  interestTags: string[];
+  faceVerified: boolean;
+  createdAt: Date;
 }
 
 /**
@@ -63,14 +76,18 @@ export async function findTargets(intent: {
 export async function broadcastIntent(intent: {
   id: string;
   creatorId: string;
-  creatorName: string;
+  creator: BroadcastCreator;
   title: string;
+  description: string | null;
   locationName: string;
   scheduledAt: Date;
+  expiresAt: Date;
   lat: number;
   lng: number;
   radiusKm: number;
   activityEmoji: string;
+  vibeTag: VibeTag;
+  groupSize: number;
 }) {
   const targets = await findTargets(intent);
   if (!targets.length) return { notified: 0, reached: 0 };
@@ -91,7 +108,7 @@ export async function broadcastIntent(intent: {
     fresh.map((t) => ({
       userId: t.id,
       type: 'INTENT_BROADCAST' as const,
-      title: `${intent.activityEmoji} ${intent.creatorName} wants company`,
+      title: `${intent.activityEmoji} ${intent.creator.name} wants company`,
       body: `${intent.title} near ${intent.locationName} at ${when} · ${formatDistance(
         t.distanceM
       )} away`,
@@ -105,11 +122,39 @@ export async function broadcastIntent(intent: {
     }))
   );
 
-  // Anyone with the app open gets the pin dropped on their map immediately.
+  // Anyone with the app open gets the full card pushed straight into the
+  // "nearby intent" popup — every field it needs to render is in this one
+  // payload, so the popup never has to round-trip a GET before showing a
+  // face, a trust badge, or a countdown.
   for (const t of fresh) {
     emitToUser(t.id, 'intent:nearby', {
       intentId: intent.id,
+      title: intent.title,
+      description: intent.description,
+      activityEmoji: intent.activityEmoji,
+      locationName: intent.locationName,
+      lat: intent.lat,
+      lng: intent.lng,
+      scheduledAt: intent.scheduledAt,
+      expiresAt: intent.expiresAt,
+      vibeTag: intent.vibeTag,
+      groupSize: intent.groupSize,
+      radiusKm: intent.radiusKm,
       distanceM: Math.round(t.distanceM),
+      distanceLabel: formatDistance(t.distanceM),
+      requiresFaceVerification: !t.faceVerified,
+      creator: {
+        id: intent.creator.id,
+        name: intent.creator.name,
+        username: intent.creator.username,
+        avatarUrl: intent.creator.avatarUrl,
+        trustTier: intent.creator.trustTier,
+        trustScore: Number(intent.creator.trustScore),
+        companionsMet: intent.creator.companionsMet,
+        interestTags: intent.creator.interestTags,
+        faceVerified: intent.creator.faceVerified,
+        createdAt: intent.creator.createdAt,
+      },
     });
   }
 

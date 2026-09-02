@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   PressableProps,
   StyleProp,
@@ -12,8 +13,9 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
-import { clayEdge, colors, radius, shadows, spacing, type } from '../../constants/theme';
+import { clayEdge, colors, glassEdge, radius, shadows, spacing, type } from '../../constants/theme';
 
 /**
  * Claymorphism primitives.
@@ -69,6 +71,56 @@ export function ClayCard({
       ]}
     >
       {children}
+    </View>
+  );
+}
+
+interface GlassCardProps {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  radiusKey?: keyof typeof radius;
+  /** How opaque the frosted fill reads over the blur — 'deep' for content
+   *  that needs stronger contrast (e.g. body text over a busy background). */
+  tint?: 'light' | 'deep';
+  intensity?: number;
+}
+
+/**
+ * A frosted panel that floats *above* whatever is behind it, rather than a
+ * clay surface resting on the page. Used for anything transient and
+ * attention-grabbing that overlays other content — live popups, toasts —
+ * where "this is temporary and on top" should read at a glance.
+ */
+export function GlassCard({
+  children,
+  style,
+  radiusKey = 'lg',
+  tint = 'light',
+  intensity = 40,
+}: GlassCardProps) {
+  return (
+    <View
+      style={[
+        { borderRadius: radius[radiusKey], overflow: 'hidden' },
+        shadows.glass,
+        style,
+      ]}
+    >
+      <BlurView
+        intensity={intensity}
+        tint="light"
+        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+        style={StyleSheet.absoluteFill}
+      />
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: tint === 'deep' ? colors.glassFillDeep : colors.glassFill },
+        ]}
+      />
+      <View style={[glassEdge, { borderRadius: radius[radiusKey], padding: spacing.lg }]}>
+        {children}
+      </View>
     </View>
   );
 }

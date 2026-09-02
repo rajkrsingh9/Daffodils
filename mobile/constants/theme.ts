@@ -53,6 +53,14 @@ export const colors = {
   shadow: '#C4B49A',
   highlight: 'rgba(255, 255, 255, 0.85)',
   overlay: 'rgba(46, 42, 34, 0.45)',
+
+  // Glass — frosted panels that float *above* the clay surface (live
+  // popups, toasts) rather than sit embedded in it. Used over a BlurView so
+  // these stay translucent instead of flat white.
+  glassFill: 'rgba(255, 252, 245, 0.72)',
+  glassFillDeep: 'rgba(255, 252, 245, 0.88)',
+  glassBorder: 'rgba(255, 255, 255, 0.55)',
+  glassHighlight: 'rgba(255, 255, 255, 0.95)',
 } as const;
 
 export const radius = {
@@ -110,6 +118,15 @@ export const shadows: Record<string, ViewStyle> = {
     shadowRadius: 14,
     elevation: 7,
   },
+  // Floating glass panels sit apart from the page rather than resting on it —
+  // a longer, softer throw than clay, with no directional bias.
+  glass: {
+    shadowColor: '#3A331F',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.22,
+    shadowRadius: 32,
+    elevation: 14,
+  },
 };
 
 /** The light catch along a clay object's top edge. */
@@ -118,6 +135,13 @@ export const clayEdge: ViewStyle = {
   borderTopColor: colors.highlight,
   borderLeftWidth: 1,
   borderLeftColor: 'rgba(255,255,255,0.5)',
+};
+
+/** A glass panel catches light on every edge, not just the top — it's a
+ *  distinct sheet floating in front of the page, not a surface resting on it. */
+export const glassEdge: ViewStyle = {
+  borderWidth: 1,
+  borderColor: colors.glassBorder,
 };
 
 const fontFamily = Platform.select({
@@ -147,6 +171,20 @@ export const vibe = {
 
 export type VibeKey = keyof typeof vibe;
 
+/**
+ * Hero gradients for the nearby-intent popup card, keyed by vibe. Standing
+ * in for a per-intent photo (there isn't one — intents are ephemeral and
+ * user-generated, not media posts): a rich two-stop wash in the vibe's own
+ * colour plus a large emoji reads as intentional art direction rather than a
+ * missing-image placeholder, and never depends on a network fetch.
+ */
+export const vibeHero = {
+  CASUAL: { colors: ['#8FCFF2', '#4FA8DE'] as const, emoji: '☕️' },
+  ENERGETIC: { colors: ['#FFB199', '#FF7A5C'] as const, emoji: '⚡️' },
+  QUIET: { colors: ['#C9BEFA', '#9683F0'] as const, emoji: '🌙' },
+  ADVENTUROUS: { colors: ['#8FE0B8', '#4CC190'] as const, emoji: '🧭' },
+} as const;
+
 export const trustTier = {
   TIER_1: { label: 'New', color: colors.textFaint, soft: colors.surfaceSunken, icon: '○' },
   TIER_2: { label: 'Verified', color: colors.success, soft: colors.mintSoft, icon: '✓' },
@@ -166,8 +204,10 @@ export const theme = {
   spacing,
   shadows,
   clayEdge,
+  glassEdge,
   type,
   vibe,
+  vibeHero,
   trustTier,
   postType,
 };

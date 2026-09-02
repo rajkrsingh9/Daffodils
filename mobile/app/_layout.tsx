@@ -10,6 +10,7 @@ import { colors, type } from '../constants/theme';
 import { useAuthStore } from '../stores/authStore';
 import { setAuthLostHandler } from '../services/api';
 import { registerForPushNotifications } from '../services/push';
+import { LiveEventProvider } from '../providers/LiveEventProvider';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -86,7 +87,12 @@ function RootNavigation() {
 
   if (status === 'loading') return <Splash />;
 
-  return <Slot />;
+  return (
+    <>
+      <Slot />
+      {status === 'authenticated' ? <LiveEventProvider /> : null}
+    </>
+  );
 }
 
 export default function RootLayout() {
