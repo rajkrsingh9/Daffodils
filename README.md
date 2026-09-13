@@ -130,6 +130,9 @@ Spec requirement: a normal user builds a profile freely, but **creating or joini
 
 Claymorphism, implemented as a system rather than a coat of paint: generous radii, a warm sand ground so white surfaces read as *raised clay*, a warm-toned drop shadow, and a light top edge (React Native has no inset shadow, so the highlight is a translucent top border). Buttons sink on press. Inputs invert the treatment to read as pressed *into* the surface.
 
+<img width="789" height="1600" alt="Daffodils" src="https://github.com/user-attachments/assets/569e5fdf-56f7-4399-9ad5-dbf6205208b4" />
+
+
 All tokens live in [`mobile/constants/theme.ts`](mobile/constants/theme.ts).
 
 ---
